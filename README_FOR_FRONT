@@ -1,0 +1,586 @@
+# Collector Chess Backend Contract For Frontend
+
+This file describes the backend exactly as it is implemented today.
+
+The frontend should receive the base HTTP URL from your environment/config.
+All routes below are relative to that base URL.
+
+Do not hardcode hostnames in the frontend.
+
+## High-Level Behavior
+
+- Guest-only multiplayer backend.
+- Exactly 2 seats per match.
+- Host is always `white`.
+- Joiner is always `black`.
+- Match phases:
+  - `waitingForPlayers`
+  - `drafting`
+  - `active`
+  - `finished`
+- Backend is authoritative.
+- Frontend must treat the latest `snapshot` from HTTP/WebSocket as source of truth.
+- Every accepted action increments `revision` by `1`.
+- Every action sent by frontend must include `baseRevision` equal to the latest known snapshot revision.
+
+## Identity Rules
+
+- Frontend provides:
+  - `guestID`: UUID
+  - `displayName`: non-empty string, max `24` chars
+- Same `guestID` can reconnect to its seat.
+- Different `guestID` cannot take over an occupied seat.
+
+## REST API
+
+### Create Match
+
+`POST /v1/matches`
+
+Request:
+
+```json
+{
+  "guestID": "UUID",
+  "displayName": "Guest Name"
+}
+```
+
+Response:
+
+```json
+{
+  "snapshot": { "...": "OnlineMatchSnapshot" },
+  "webSocketURL": "ws://.../v1/matches/{matchID}/live?guestID={guestID}"
+}
+```
+
+Notes:
+
+- Creates a new match.
+- Creates the white seat.
+- Initial phase is `waitingForPlayers`.
+- Initial revision is `1`.
+
+### Join Match
+
+`POST /v1/matches/join`
+
+Request:
+
+```json
+{
+  "roomCode": "ABC123",
+  "guestID": "UUID",
+  "displayName": "Guest Name"
+}
+```
+
+Response:
+
+```json
+{
+  "snapshot": { "...": "OnlineMatchSnapshot" },
+  "webSocketURL": "ws://.../v1/matches/{matchID}/live?guestID={guestID}"
+}
+```
+
+Notes:
+
+- If black seat is free, joiner becomes `black`.
+- When both seats exist, phase changes to `drafting`.
+- If the same `guestID` joins again, backend treats it as reconnect.
+
+### Get Latest Match Snapshot
+
+`GET /v1/matches/{matchID}?guestID={guestID}`
+
+Response:
+
+```json
+{
+  "...": "OnlineMatchSnapshot"
+}
+```
+
+Notes:
+
+- Use this on app relaunch/reconnect.
+- Guest must already own a seat in the match.
+- Marks that guest as connected again.
+
+### Submit Match Action
+
+`POST /v1/matches/{matchID}/actions`
+
+Request:
+
+```json
+{
+  "id": "UUID",
+  "matchID": "UUID",
+  "actorID": "UUID",
+  "baseRevision": 3,
+  "type": "makeMove",
+  "submittedAt": "2026-03-21T21:00:00Z",
+  "payload": {}
+}
+```
+
+Response:
+
+```json
+{
+  "...": "OnlineMatchEvent"
+}
+```
+
+Notes:
+
+- HTTP returns `200` for both accepted and rejected actions.
+- Check `type`:
+  - `actionAccepted`
+  - `actionRejected`
+  - `presenceChanged`
+  - `finished`
+- If rejected, use `rejectionReason` and replace local state with returned `snapshot`.
+
+## WebSocket
+
+`WS /v1/matches/{matchID}/live?guestID={guestID}`
+
+Behavior:
+
+- Server pushes only. Frontend should not send messages on this socket.
+- On connect, server immediately sends a `snapshot` event with the latest snapshot.
+- Accepted actions are broadcast to connected match clients.
+- Presence changes are broadcast when a guest disconnects or reconnects.
+- Rejected actions are only sent back to the acting guest.
+- If the match ends, event type becomes `finished`.
+
+Important:
+
+- Frontend should prefer the `webSocketURL` returned by create/join.
+- If frontend constructs it manually, switch the base URL protocol:
+  - `http` -> `ws`
+  - `https` -> `wss`
+
+## Main Response Models
+
+### OnlineMatchSnapshot
+
+```json
+{
+  "id": "UUID",
+  "roomCode": "ABC123",
+  "revision": 4,
+  "phase": "drafting",
+  "seats": [],
+  "draft": {},
+  "board": {},
+  "currentTurn": "white",
+  "status": {},
+  "outcome": null,
+  "createdAt": "ISO-8601",
+  "updatedAt": "ISO-8601"
+}
+```
+
+Fields:
+
+- `id`: match UUID
+- `roomCode`: short join code
+- `revision`: authoritative server revision
+- `phase`: `waitingForPlayers | drafting | active | finished`
+- `currentTurn`: `white | black`
+- `outcome`: nullable
+
+### OnlineMatchSeat
+
+```json
+{
+  "color": "white",
+  "player": {
+    "id": "UUID",
+    "displayName": "Guest Name",
+    "createdAt": "ISO-8601"
+  },
+  "isHost": true,
+  "isReady": false,
+  "connectionStatus": "connected"
+}
+```
+
+Notes:
+
+- `isLocalDevice` is optional and currently omitted by backend.
+- In practice backend emits `connected` and `disconnected`.
+- `invited` exists in the type but is not currently emitted.
+
+### OnlineSkillDraftState
+
+```json
+{
+  "maxSkillsPerPlayer": 2,
+  "selections": [
+    {
+      "color": "white",
+      "skillID": "shadowstep",
+      "position": { "row": 0, "column": 1 },
+      "isLockedIn": false
+    }
+  ]
+}
+```
+
+Notes:
+
+- `position` may be `null`.
+- Frontend should not assume every skill is assigned to a piece.
+
+### ChessBoardSnapshot
+
+```json
+{
+  "pieces": [],
+  "moveHistory": []
+}
+```
+
+### ChessPieceSnapshot
+
+```json
+{
+  "id": "UUID",
+  "pieceName": "pawn",
+  "pieceColor": "white",
+  "behaviourID": "standardPawn",
+  "position": { "row": 1, "column": 4 },
+  "moveCount": 0,
+  "equippedSkills": [
+    {
+      "id": "UUID",
+      "skillID": "shadowstep",
+      "hasBeenUsed": false
+    }
+  ]
+}
+```
+
+### ChessMoveRecordSnapshot
+
+```json
+{
+  "id": "UUID",
+  "pieceID": "UUID",
+  "pieceName": "pawn",
+  "pieceColor": "white",
+  "from": { "row": 1, "column": 4 },
+  "to": { "row": 3, "column": 4 },
+  "capturedPieceID": null,
+  "capturedPieceName": null,
+  "promotionPieceName": null,
+  "equippedSkillID": null,
+  "skillID": null,
+  "createdAt": "ISO-8601"
+}
+```
+
+### ChessGameStatusSnapshot
+
+```json
+{
+  "kind": "active",
+  "turn": "white",
+  "inCheck": false,
+  "winner": null
+}
+```
+
+Notes:
+
+- `kind`: `active | checkmate | stalemate`
+- `turn` is nullable in finished states.
+- `winner` is set on checkmate/resignation, null on stalemate.
+
+### OnlineMatchOutcome
+
+```json
+{
+  "kind": "resignation",
+  "winner": "black",
+  "finishedAt": "ISO-8601"
+}
+```
+
+Current values:
+
+- `checkmate`
+- `stalemate`
+- `resignation`
+- `aborted` exists in the type but is not currently produced by normal gameplay flow
+
+### OnlineMatchEvent
+
+```json
+{
+  "id": "UUID",
+  "matchID": "UUID",
+  "revision": 5,
+  "type": "actionAccepted",
+  "actionID": "UUID",
+  "rejectionReason": null,
+  "snapshot": { "...": "OnlineMatchSnapshot" }
+}
+```
+
+Event types:
+
+- `snapshot`
+- `actionAccepted`
+- `actionRejected`
+- `presenceChanged`
+- `finished`
+
+Frontend rules:
+
+- Always apply `snapshot`.
+- Use `rejectionReason` only when `type == actionRejected`.
+
+## Supported Actions
+
+### 1. `updateDraftSelection`
+
+Payload:
+
+```json
+{
+  "skillID": "shadowstep",
+  "position": { "row": 0, "column": 1 }
+}
+```
+
+Notes:
+
+- `position` can be `null`.
+- Valid skill ids:
+  - `shadowstep`
+  - `knightfall`
+  - `deadeye`
+
+### 2. `lockDraft`
+
+Payload:
+
+```json
+{}
+```
+
+Notes:
+
+- Empty object is safest.
+- After both players lock, match becomes `active`.
+
+### 3. `makeMove`
+
+Payload:
+
+```json
+{
+  "move": {
+    "from": { "row": 1, "column": 4 },
+    "to": { "row": 3, "column": 4 },
+    "promotionPieceName": null,
+    "equippedSkillID": null
+  }
+}
+```
+
+Notes:
+
+- `promotionPieceName` is required on a promotion move.
+- Valid promotion choices:
+  - `queen`
+  - `rook`
+  - `bishop`
+  - `knight`
+- `equippedSkillID` is optional and should only be sent when intentionally using a skill.
+
+### 4. `resign`
+
+Payload:
+
+```json
+{}
+```
+
+### 5. `leaveMatch`
+
+Payload:
+
+```json
+{}
+```
+
+Notes:
+
+- This marks the seat disconnected and emits a `presenceChanged` event.
+
+### 6. `joinMatch`
+
+This action type exists in the backend model, but frontend should normally use:
+
+- `POST /v1/matches/join`
+
+There is no reason for normal frontend flow to use action-based join if REST join is already available.
+
+## Match Rules Frontend Should Respect
+
+- Only send actions for the seat owned by `guestID`.
+- Only move on your turn.
+- Do not trust local optimistic state after the server responds.
+- Replace local state with server `snapshot` after every action result and websocket event.
+- Drafting:
+  - max `2` skills per color
+  - no duplicate skill id for same color
+  - selected position must belong to acting color
+- Match becomes active only after both players lock draft.
+- White always moves first.
+
+## Chess Validation Implemented On Backend
+
+- Standard movement rules
+- Turn enforcement
+- Check prevention
+- Checkmate
+- Stalemate
+- Castling
+- En passant
+- Promotion
+- Kings cannot be captured
+
+## Current Skill Behavior Implemented On Backend
+
+These are the current server rules.
+
+- `shadowstep`
+  - capture an adjacent enemy piece
+- `knightfall`
+  - capture in a knight pattern
+- `deadeye`
+  - capture in a straight or diagonal line with clear path
+
+Important:
+
+- These skill rules are server assumptions based on current backend implementation.
+- If the iOS client uses different exact rules, frontend/backend/client behavior should be aligned later.
+
+## Error Response Shape
+
+For non-action HTTP failures, backend returns:
+
+```json
+{
+  "code": "roomNotFound",
+  "message": "The requested room code does not exist."
+}
+```
+
+Common HTTP statuses:
+
+- `400`
+- `403`
+- `404`
+- `409`
+- `500`
+
+## Common Error / Rejection Codes
+
+The frontend can use these codes for UX and retry logic.
+
+General:
+
+- `missingGuestId`
+- `invalidDisplayName`
+- `invalidRoomCode`
+- `roomNotFound`
+- `roomFull`
+- `matchNotFound`
+- `seatOwnership`
+- `missingAction`
+- `missingActionId`
+- `missingTimestamp`
+- `missingActionType`
+- `matchMismatch`
+- `invalidPayload`
+- `staleRevision`
+- `invalidPhase`
+- `alreadyJoined`
+- `roomCodeGenerationFailed`
+
+Draft:
+
+- `draftLocked`
+- `invalidDraftPiece`
+- `skillLimit`
+- `unknownSkill`
+- `invalidPosition`
+
+Move / gameplay:
+
+- `notYourTurn`
+- `pieceNotFound`
+- `wrongSeat`
+- `selfCheck`
+- `occupiedByAlly`
+- `illegalMove`
+- `blockedPath`
+- `promotionRequired`
+- `invalidPromotion`
+- `invalidSkillMove`
+- `skillNotEquipped`
+- `skillAlreadyUsed`
+- `missingKing`
+
+## Recommended Frontend Flow
+
+### Create Flow
+
+1. Call `POST /v1/matches`
+2. Store returned `snapshot`
+3. Connect to returned `webSocketURL`
+4. Render `roomCode`
+
+### Join Flow
+
+1. Call `POST /v1/matches/join`
+2. Store returned `snapshot`
+3. Connect to returned `webSocketURL`
+
+### Reconnect Flow
+
+1. Call `GET /v1/matches/{matchID}?guestID={guestID}`
+2. Replace local state with returned snapshot
+3. Reconnect WebSocket
+
+### Action Flow
+
+1. Read latest `snapshot.revision`
+2. Send action with:
+   - new action `id`
+   - `matchID`
+   - `actorID = guestID`
+   - `baseRevision = snapshot.revision`
+   - `submittedAt`
+3. On response:
+   - always replace local snapshot with `event.snapshot`
+   - if `type == actionRejected`, use `rejectionReason`
+
+## Practical Frontend Notes
+
+- Backend already returns `webSocketURL`, so frontend does not need to build it manually unless desired.
+- Backend timestamps are ISO-8601 UTC strings.
+- Backend revisions are the safest way to detect stale local state.
+- Backend move history is already included in every snapshot.
+- Backend emits full snapshots, not partial patches.
+- Frontend can rely on websocket events plus occasional `GET` for reconnect/recovery.
