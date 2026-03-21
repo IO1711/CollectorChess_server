@@ -3,6 +3,6 @@ COPY . .
 RUN mvn clean package -DskipTests
 
 FROM openjdk:17.0.1-jdk-slim
-COPY --from=build /target/CollectorChess-0.0.1-SNAPSHOT.jar CollectorChess.jar
+COPY --from=build /target/collectorChess-0.0.1-SNAPSHOT.jar CollectorChess.jar
 EXPOSE 8080
 ENTRYPOINT [ "java", "-jar", "CollectorChess.jar" ]
