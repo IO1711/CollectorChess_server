@@ -253,6 +253,10 @@ public class MatchAggregate {
     }
 
     public void setDraftSelection(PieceColor color, String skillId, Position position) {
+        if (position == null) {
+            draftSelections.removeIf(selection -> selection.color == color && selection.skillId.equals(skillId));
+            return;
+        }
         DraftSelectionState existing = draftSelections.stream()
                 .filter(selection -> selection.color == color && selection.skillId.equals(skillId))
                 .findFirst()

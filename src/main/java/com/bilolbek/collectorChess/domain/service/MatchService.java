@@ -242,7 +242,10 @@ public class MatchService {
                 .filter(selection -> selection.color() == seat.color())
                 .toList();
         boolean alreadySelected = colorSelections.stream().anyMatch(selection -> selection.skillId().equals(skillId));
-        if (!alreadySelected && colorSelections.size() >= MatchAggregate.MAX_SKILLS_PER_PLAYER) {
+        long activeSelectionCount = colorSelections.stream()
+                .filter(selection -> selection.position() != null)
+                .count();
+        if (payload.position() != null && !alreadySelected && activeSelectionCount >= MatchAggregate.MAX_SKILLS_PER_PLAYER) {
             throw new DomainException(HttpStatus.BAD_REQUEST, "skillLimit", "Each player may select at most two skills.");
         }
 

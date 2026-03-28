@@ -116,6 +116,56 @@ class MatchServiceIntegrationTest {
     }
 
     @Test
+    void clearingDraftSelectionFreesTheSlotForAnotherSkill() {
+        UUID whiteGuestId = UUID.randomUUID();
+        UUID blackGuestId = UUID.randomUUID();
+
+        Contracts.OnlineMatchSnapshot created = matchService.createMatch(whiteGuestId, "White Guest");
+        MatchService.ServiceSnapshot joined = matchService.joinMatch(created.roomCode(), blackGuestId, "Black Guest");
+
+        Contracts.OnlineMatchEvent firstSelection = submitAction(
+                joined.snapshot().id(),
+                whiteGuestId,
+                joined.snapshot().revision(),
+                Contracts.ActionType.UPDATE_DRAFT_SELECTION,
+                new Contracts.UpdateDraftSelectionPayload("shadowstep", new Contracts.Position(0, 1))
+        );
+        Contracts.OnlineMatchEvent secondSelection = submitAction(
+                joined.snapshot().id(),
+                whiteGuestId,
+                firstSelection.snapshot().revision(),
+                Contracts.ActionType.UPDATE_DRAFT_SELECTION,
+                new Contracts.UpdateDraftSelectionPayload("knightfall", new Contracts.Position(0, 6))
+        );
+        Contracts.OnlineMatchEvent clearedSelection = submitAction(
+                joined.snapshot().id(),
+                whiteGuestId,
+                secondSelection.snapshot().revision(),
+                Contracts.ActionType.UPDATE_DRAFT_SELECTION,
+                new Contracts.UpdateDraftSelectionPayload("shadowstep", null)
+        );
+        Contracts.OnlineMatchEvent replacementSelection = submitAction(
+                joined.snapshot().id(),
+                whiteGuestId,
+                clearedSelection.snapshot().revision(),
+                Contracts.ActionType.UPDATE_DRAFT_SELECTION,
+                new Contracts.UpdateDraftSelectionPayload("deadeye", new Contracts.Position(1, 3))
+        );
+
+        assertThat(clearedSelection.type()).isEqualTo(Contracts.EventType.ACTION_ACCEPTED);
+        assertThat(clearedSelection.snapshot().draft().selections())
+                .filteredOn(selection -> selection.color() == Contracts.PieceColor.WHITE)
+                .extracting(Contracts.OnlineSkillDraftSelection::skillID)
+                .containsExactly("knightfall");
+
+        assertThat(replacementSelection.type()).isEqualTo(Contracts.EventType.ACTION_ACCEPTED);
+        assertThat(replacementSelection.snapshot().draft().selections())
+                .filteredOn(selection -> selection.color() == Contracts.PieceColor.WHITE)
+                .extracting(Contracts.OnlineSkillDraftSelection::skillID)
+                .containsExactly("deadeye", "knightfall");
+    }
+
+    @Test
     void listJoinableRoomsReturnsOnlyRoomsWithAnOpenSeat() {
         Contracts.OnlineMatchSnapshot waitingRoom = matchService.createMatch(UUID.randomUUID(), "Waiting Host");
         Contracts.OnlineMatchSnapshot fullRoom = matchService.createMatch(UUID.randomUUID(), "Full Host");
