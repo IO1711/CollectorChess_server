@@ -13,6 +13,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -53,6 +54,22 @@ public class JdbcMatchRepository implements MatchRepository {
                 WHERE room_code = ?
                 """ + (forUpdate ? " FOR UPDATE" : "");
         return jdbcTemplate.query(sql, matchRowMapper(), roomCode).stream().findFirst();
+    }
+
+    @Override
+    public List<MatchAggregate> findJoinableMatches() {
+        String sql = """
+                SELECT snapshot_json,
+                       white_last_connected_at,
+                       white_last_disconnected_at,
+                       black_last_connected_at,
+                       black_last_disconnected_at
+                FROM matches
+                WHERE phase = ?
+                  AND black_guest_id IS NULL
+                ORDER BY created_at DESC
+                """;
+        return jdbcTemplate.query(sql, matchRowMapper(), Contracts.MatchPhase.WAITING_FOR_PLAYERS.wireValue());
     }
 
     @Override
@@ -130,6 +147,12 @@ public class JdbcMatchRepository implements MatchRepository {
                 writeJson(aggregate.toSnapshot()),
                 aggregate.id()
         );
+    }
+
+    @Override
+    public void deleteById(UUID matchId) {
+        jdbcTemplate.update("DELETE FROM action_logs WHERE match_id = ?", matchId);
+        jdbcTemplate.update("DELETE FROM matches WHERE id = ?", matchId);
     }
 
     @Override

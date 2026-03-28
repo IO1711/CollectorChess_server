@@ -404,6 +404,10 @@ public class MatchAggregate {
             return displayName;
         }
 
+        public Instant playerCreatedAt() {
+            return playerCreatedAt;
+        }
+
         public boolean ready() {
             return ready;
         }

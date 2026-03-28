@@ -364,6 +364,16 @@ public final class Contracts {
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record JoinableRoomSnapshot(
+            UUID id,
+            String roomCode,
+            GuestPlayer host,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record OnlineMatchAction(
             UUID id,
             UUID matchID,

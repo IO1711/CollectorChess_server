@@ -112,6 +112,7 @@ Backend rules:
   - stalemate
   - resignation
   - manual abort by server/admin if needed
+- Once a match finishes, its room is removed so it no longer appears in joinable room listings.
 - Profiles, rematch flows, and post-game history are not required yet.
 
 ## Required API Surface
@@ -162,6 +163,12 @@ The exact framework is up to the backend developer, but the client needs this su
   "webSocketURL": "wss://..."
 }
 ```
+
+`GET /v1/matches/rooms`
+
+- Returns rooms that are still joinable.
+- Only matches with an open black seat are included.
+- Finished or already-full matches are not returned.
 
 `GET /v1/matches/{matchID}?guestID={guestID}`
 

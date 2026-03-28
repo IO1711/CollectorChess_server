@@ -91,6 +91,34 @@ Notes:
 - When both seats exist, phase changes to `drafting`.
 - If the same `guestID` joins again, backend treats it as reconnect.
 
+### List Joinable Rooms
+
+`GET /v1/matches/rooms`
+
+Response:
+
+```json
+[
+  {
+    "id": "UUID",
+    "roomCode": "ABC123",
+    "host": {
+      "id": "UUID",
+      "displayName": "Guest Name",
+      "createdAt": "ISO-8601"
+    },
+    "createdAt": "ISO-8601",
+    "updatedAt": "ISO-8601"
+  }
+]
+```
+
+Notes:
+
+- Only rooms with an open black seat are returned.
+- Rooms that already have two players are omitted.
+- Finished matches are deleted and therefore never appear here.
+
 ### Get Latest Match Snapshot
 
 `GET /v1/matches/{matchID}?guestID={guestID}`

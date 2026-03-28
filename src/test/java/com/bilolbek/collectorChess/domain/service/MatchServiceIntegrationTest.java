@@ -1,6 +1,7 @@
 package com.bilolbek.collectorChess.domain.service;
 
 import com.bilolbek.collectorChess.domain.model.Contracts;
+import com.bilolbek.collectorChess.persistence.MatchRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,6 +20,9 @@ class MatchServiceIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private MatchRepository matchRepository;
 
     @Test
     void createJoinDraftAndMoveFlowProducesAuthoritativeSnapshots() {
@@ -112,7 +116,20 @@ class MatchServiceIntegrationTest {
     }
 
     @Test
-    void resignationFinishesTheMatchAndRecordsTheWinner() {
+    void listJoinableRoomsReturnsOnlyRoomsWithAnOpenSeat() {
+        Contracts.OnlineMatchSnapshot waitingRoom = matchService.createMatch(UUID.randomUUID(), "Waiting Host");
+        Contracts.OnlineMatchSnapshot fullRoom = matchService.createMatch(UUID.randomUUID(), "Full Host");
+
+        matchService.joinMatch(fullRoom.roomCode(), UUID.randomUUID(), "Full Joiner");
+
+        assertThat(matchService.listJoinableRooms())
+                .extracting(Contracts.JoinableRoomSnapshot::roomCode)
+                .contains(waitingRoom.roomCode())
+                .doesNotContain(fullRoom.roomCode());
+    }
+
+    @Test
+    void resignationFinishesTheMatchAndDeletesTheRoom() {
         ActiveMatch activeMatch = createActiveMatch();
 
         Contracts.OnlineMatchEvent resigned = submitAction(
@@ -129,6 +146,7 @@ class MatchServiceIntegrationTest {
         assertThat(resigned.snapshot().outcome().kind()).isEqualTo(Contracts.OutcomeKind.RESIGNATION);
         assertThat(resigned.snapshot().outcome().winner()).isEqualTo(Contracts.PieceColor.BLACK);
         assertThat(resigned.snapshot().status().winner()).isEqualTo(Contracts.PieceColor.BLACK);
+        assertThat(matchRepository.findById(activeMatch.matchId(), false)).isEmpty();
     }
 
     private ActiveMatch createActiveMatch() {

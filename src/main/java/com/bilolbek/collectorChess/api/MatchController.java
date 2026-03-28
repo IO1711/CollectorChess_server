@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -43,6 +44,11 @@ public class MatchController {
             matchLivePublisher.broadcast(result.snapshot().id(), result.broadcastEvent());
         }
         return ResponseEntity.ok(new MatchConnectResponse(result.snapshot(), webSocketUrl(httpServletRequest, result.snapshot().id(), request.guestID())));
+    }
+
+    @GetMapping("/rooms")
+    public ResponseEntity<List<Contracts.JoinableRoomSnapshot>> listJoinableRooms() {
+        return ResponseEntity.ok(matchService.listJoinableRooms());
     }
 
     @GetMapping("/{matchID}")

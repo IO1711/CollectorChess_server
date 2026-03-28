@@ -6,6 +6,8 @@ import com.bilolbek.collectorChess.domain.model.Contracts.ChessGameStatusSnapsho
 import com.bilolbek.collectorChess.domain.model.Contracts.ConnectionStatus;
 import com.bilolbek.collectorChess.domain.model.Contracts.EventType;
 import com.bilolbek.collectorChess.domain.model.Contracts.GameStatusKind;
+import com.bilolbek.collectorChess.domain.model.Contracts.GuestPlayer;
+import com.bilolbek.collectorChess.domain.model.Contracts.JoinableRoomSnapshot;
 import com.bilolbek.collectorChess.domain.model.Contracts.JoinMatchPayload;
 import com.bilolbek.collectorChess.domain.model.Contracts.MakeMovePayload;
 import com.bilolbek.collectorChess.domain.model.Contracts.MatchPhase;
@@ -66,6 +68,13 @@ public class MatchService {
         MatchAggregate aggregate = MatchAggregate.create(nonNullGuestId, sanitizedName, uniqueRoomCode(), now);
         matchRepository.insert(aggregate);
         return aggregate.toSnapshot();
+    }
+
+    @Transactional(readOnly = true)
+    public List<JoinableRoomSnapshot> listJoinableRooms() {
+        return matchRepository.findJoinableMatches().stream()
+                .map(this::toJoinableRoomSnapshot)
+                .toList();
     }
 
     @Transactional
@@ -135,19 +144,16 @@ public class MatchService {
                 .orElseThrow(() -> new DomainException(HttpStatus.NOT_FOUND, "matchNotFound", "The requested match does not exist."));
 
         OnlineMatchEvent event;
-        boolean accepted = false;
         try {
             validateActionEnvelope(action, aggregate);
             applyAction(aggregate, action, now);
             aggregate.touch(now);
-            matchRepository.update(aggregate);
-            accepted = true;
             event = buildAcceptedActionEvent(aggregate, action);
+            persistAcceptedAction(aggregate, action, event, now);
         } catch (DomainException exception) {
             event = buildEvent(aggregate, EventType.ACTION_REJECTED, action.id(), exception.code());
+            matchRepository.logAction(action, event, false, now);
         }
-
-        matchRepository.logAction(action, event, accepted, now);
         return event;
     }
 
@@ -318,6 +324,38 @@ public class MatchService {
                 rejectionReason,
                 snapshot
         );
+    }
+
+    private JoinableRoomSnapshot toJoinableRoomSnapshot(MatchAggregate aggregate) {
+        SeatState hostSeat = aggregate.seatForColor(PieceColor.WHITE)
+                .orElseThrow(() -> new IllegalStateException("White seat must exist."));
+        GuestPlayer host = new GuestPlayer(
+                hostSeat.guestId(),
+                hostSeat.displayName(),
+                hostSeat.playerCreatedAt()
+        );
+        return new JoinableRoomSnapshot(
+                aggregate.id(),
+                aggregate.roomCode(),
+                host,
+                aggregate.createdAt(),
+                aggregate.updatedAt()
+        );
+    }
+
+    private void persistAcceptedAction(
+            MatchAggregate aggregate,
+            Contracts.OnlineMatchAction action,
+            OnlineMatchEvent event,
+            Instant now
+    ) {
+        if (aggregate.phase() == MatchPhase.FINISHED) {
+            matchRepository.logAction(action, event, true, now);
+            matchRepository.deleteById(aggregate.id());
+            return;
+        }
+        matchRepository.update(aggregate);
+        matchRepository.logAction(action, event, true, now);
     }
 
     private SeatState requireSeatOwner(MatchAggregate aggregate, UUID actorId, boolean mustExist) {

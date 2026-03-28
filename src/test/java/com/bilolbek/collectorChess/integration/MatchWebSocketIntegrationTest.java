@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import tools.jackson.databind.JavaType;
 import tools.jackson.databind.ObjectMapper;
 
 import java.net.URI;
@@ -16,6 +17,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -77,11 +79,55 @@ class MatchWebSocketIntegrationTest {
         socket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     }
 
+    @Test
+    void roomsEndpointReturnsOnlyJoinableRooms() throws Exception {
+        HttpClient httpClient = HttpClient.newHttpClient();
+
+        MatchConnectResponse waitingRoom = postJson(
+                httpClient,
+                "/v1/matches",
+                new CreateMatchRequest(UUID.randomUUID(), "Lobby Host"),
+                MatchConnectResponse.class
+        );
+        MatchConnectResponse fullRoom = postJson(
+                httpClient,
+                "/v1/matches",
+                new CreateMatchRequest(UUID.randomUUID(), "Busy Host"),
+                MatchConnectResponse.class
+        );
+
+        postJson(
+                httpClient,
+                "/v1/matches/join",
+                new JoinMatchRequest(fullRoom.snapshot().roomCode(), UUID.randomUUID(), "Busy Joiner"),
+                MatchConnectResponse.class
+        );
+
+        JavaType responseType = objectMapper.getTypeFactory()
+                .constructCollectionType(List.class, Contracts.JoinableRoomSnapshot.class);
+        List<Contracts.JoinableRoomSnapshot> rooms = getJson(httpClient, "/v1/matches/rooms", responseType);
+
+        assertThat(rooms)
+                .extracting(Contracts.JoinableRoomSnapshot::roomCode)
+                .contains(waitingRoom.snapshot().roomCode())
+                .doesNotContain(fullRoom.snapshot().roomCode());
+    }
+
     private <T> T postJson(HttpClient httpClient, String path, Object requestBody, Class<T> responseType) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("http://localhost:" + port + path))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestBody)))
+                .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).isEqualTo(200);
+        return objectMapper.readValue(response.body(), responseType);
+    }
+
+    private <T> T getJson(HttpClient httpClient, String path, JavaType responseType) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + path))
+                .GET()
                 .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(200);
